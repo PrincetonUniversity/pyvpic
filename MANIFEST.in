@@ -1,0 +1,3 @@
+include README.md
+include pyvpic/viewer/viewer.ui
+include pyvpic/viewer/crosshairs.svg
