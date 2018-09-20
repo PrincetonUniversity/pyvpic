@@ -113,27 +113,12 @@ class FilePerRankReader(BaseReader):
         with open(header_file, 'r') as header:
             for line in header:
 
-                # Uppercase is ugly
-                line = line.lower()
-
-                # Initialize the species.
-                match = re.match(r'num_output_species (\d+)', line)
-                if match:
-                    nsp = int(match.group(1))
-                    params['species'] = [{'dtype': []} for i in range(nsp)]
-                    continue
-
-                # Set active species
-                match = re.match(r'# species\((\d+)\)', line)
-                if match:
-                    active_species = int(match.group(1))-1
-                elif line.startswith('# field data information'):
-                    active_species = None
-
-                # Read a parameter
-                match = re.match(r'([a-z]+)_([_a-z]+) (.*)', line)
+                # Read a parameter, we need to maintain capitals here.
+                match = re.match(r'([a-zA-Z]+)_([_a-zA-Z]+) (.*)', line)
                 if match:
                     group, key, values = match.groups()
+                    group = group.lower()
+                    key = key.lower()
 
                     values = values.split(' ')
                     try:
@@ -151,6 +136,23 @@ class FilePerRankReader(BaseReader):
                         params[group][key] = values
                     else:
                         params[key] = values
+
+                # Uppercase is ugly, get rid of it for everything else.
+                line = line.lower()
+
+                # Initialize the species.
+                match = re.match(r'num_output_species (\d+)', line)
+                if match:
+                    nsp = int(match.group(1))
+                    params['species'] = [{'dtype': []} for i in range(nsp)]
+                    continue
+
+                # Set active species
+                match = re.match(r'# species\((\d+)\)', line)
+                if match:
+                    active_species = int(match.group(1))-1
+                elif line.startswith('# field data information'):
+                    active_species = None
 
                 # Read variable information
                 match = re.match(r'"(.*)" (\w+) (\d+) (\w+) (\d+)', line)
