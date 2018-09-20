@@ -64,7 +64,7 @@ class TreeModel(QAbstractItemModel):
         item = index.internalPointer()
         if role == Qt.DisplayRole:
             return item.data(index.column())
-        elif role == Qt.UserRole and item.dataset is not None:
+        elif role == Qt.UserRole and item.dataset:
             return item.absname().split('/', 1)[1]
         return None
 
