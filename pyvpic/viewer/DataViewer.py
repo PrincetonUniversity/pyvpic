@@ -144,10 +144,10 @@ class VPICDataViewer(QtWidgets.QMainWindow, uic.loadUiType(UIFILE)[0]):
                 self.fig.read_data()
                 self.fig.draw_plots(rescale=True)
 
-    def update_sliders(self):
+    def update_sliders(self, value):
         """Slot to set the out-of-plane slices.
-        Called by Z1Slider on signal 'sliderReleased'
-        Called by Z2Slider on signal 'sliderReleased'
+        Called by Z1Slider on signal 'valueChanged'
+        Called by Z2Slider on signal 'valueChanged'
         """
         text = self.Z1Label.text()
         self.fig.set_slice(self.AXES[text], self.Z1Slider.sliderPosition())

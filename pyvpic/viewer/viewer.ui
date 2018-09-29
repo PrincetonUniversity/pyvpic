@@ -143,6 +143,9 @@
                </item>
                <item row="2" column="1">
                 <widget class="QSlider" name="Z1Slider">
+                 <property name="tracking">
+                  <bool>false</bool>
+                 </property>
                  <property name="orientation">
                   <enum>Qt::Horizontal</enum>
                  </property>
@@ -157,6 +160,9 @@
                </item>
                <item row="3" column="1">
                 <widget class="QSlider" name="Z2Slider">
+                 <property name="tracking">
+                  <bool>false</bool>
+                 </property>
                  <property name="orientation">
                   <enum>Qt::Horizontal</enum>
                  </property>
@@ -313,9 +319,9 @@
   </connection>
   <connection>
    <sender>Z1Slider</sender>
-   <signal>sliderReleased()</signal>
+   <signal>valueChanged(int)</signal>
    <receiver>VPICViewer</receiver>
-   <slot>update_sliders()</slot>
+   <slot>update_sliders(int)</slot>
    <hints>
     <hint type="sourcelabel">
      <x>349</x>
@@ -329,9 +335,9 @@
   </connection>
   <connection>
    <sender>Z2Slider</sender>
-   <signal>sliderReleased()</signal>
+   <signal>valueChanged(int)</signal>
    <receiver>VPICViewer</receiver>
-   <slot>update_sliders()</slot>
+   <slot>update_sliders(int)</slot>
    <hints>
     <hint type="sourcelabel">
      <x>349</x>
@@ -365,6 +371,6 @@
   <slot>dir_dialog()</slot>
   <slot>change_dataset(QModelIndex)</slot>
   <slot>update_axes()</slot>
-  <slot>update_sliders()</slot>
+  <slot>update_sliders(int)</slot>
  </slots>
 </ui>
