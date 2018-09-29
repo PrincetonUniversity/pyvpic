@@ -188,13 +188,15 @@ class FilePerRankReader(BaseReader):
 
         if 'data_base_filename' in self._params['field']:
             dsets = self._params['field']['dtype'].names
+            dname = self._params['field']['data_directory']
             name = self._params['field']['data_base_filename']
-            datasets.extend([f'{name}/{dset}' for dset in dsets])
+            datasets.extend([f'{dname}/{name}/{dset}' for dset in dsets])
 
         for species in self._params['species']:
             dsets = species['dtype'].names
+            dname = species['data_directory']
             name = species['data_base_filename']
-            datasets.extend([f'{name}/{dset}' for dset in dsets])
+            datasets.extend([f'{dname}/{name}/{dset}' for dset in dsets])
 
         return datasets
 
@@ -202,7 +204,8 @@ class FilePerRankReader(BaseReader):
         """Get descriptive information for the files containing `dataset`."""
         fileinfos = [self._params['field']] + self._params['species']
         for fileinfo in fileinfos:
-            if dataset.startswith(fileinfo['data_base_filename']+'/'):
+            prefix = fileinfo['data_directory']+'/'+fileinfo['data_base_filename']
+            if dataset.startswith(prefix+'/'):
                 return fileinfo
         raise KeyError(f'Unknown dataset {dataset}.')
 
