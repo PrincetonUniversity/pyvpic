@@ -87,4 +87,8 @@ def main(fpath=None, **kwargs):
     log.info('Launching viewer')
     window = VPICDataViewer(fpath, statusbar_label=status, **kwargs)
     window.show()
-    return app.exec_()
+    app.exec_()
+
+    # Manually remove QLogLabel to avoid error on exit.
+    log.removeHandler(status)
+    return
