@@ -27,6 +27,10 @@ def open(path, **kwargs):
         dumps may be either banded or interleaved, and this should be set using
         the `interleave` keyword.
 
+    H5Reader
+        Reads HDF5 file outputs form VPIC. To use this reader, `path` should 
+        point to an HDF5 file.
+
     Parameters
     ----------
     path: string
@@ -47,5 +51,8 @@ def open(path, **kwargs):
 
     elif path.endswith('.vpc'):
         return readers.FilePerRankReader(path, **kwargs)
+
+    elif path.endswith('.h5'):
+        return readers.H5Reader(path, **kwargs)
 
     raise IOError('Unable to determine reader for "{path}".')
