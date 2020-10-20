@@ -40,7 +40,7 @@ The viewer can also be launched from within an interactive python session.
 
 ```python
 >>> import pyvpic.viewer
->>> pyvpic.viewer.run('global.vpc', interleave=True)
+>>> pyvpic.viewer.main('global.vpc', interleave=True)
 ```
 
 
