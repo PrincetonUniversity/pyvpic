@@ -222,57 +222,97 @@ class FilePerRankReader(BaseReader):
         timesteps.sort()
         return np.array(timesteps)
 
-    def get_grid(self, dataset):
+    def get_local_grid(self, dataset, rank, timestep=0):
+        """Get the 3D grid for a domain, defined on cell centers."""
+
+        finfo = self.get_fileinfo(dataset)
+        rankfile = os.path.join(self._params['basedir'],
+                                finfo['data_directory'],
+                                f'T.{timestep}',
+                                f'{finfo["data_base_filename"]}.{timestep}.{rank}')
+
+        mmap = np.memmap(rankfile, dtype='int32', shape=(16,), offset=31)[::-1]
+
+        # Load step and local grid
+        file_step = mmap[0]
+        file_rank = mmap[14]
+
+        if file_step != timestep:
+            raise IOError(f"Timestep mismatch in {rankfile}. "
+                          f"Expected {timestep}, read {file_step}.")
+
+        if file_rank != rank:
+            raise IOError(f"Domain rank mismatch in {rankfile}. "
+                          f"Expected {rank}, read {file_rank}.")
+
+        f_nx = mmap[1:4]
+
+        # Reinterpret as float
+        mmap = mmap.view('float32')
+
+        # Load spatial coordinates
+        f_dx = mmap[5:8]
+        f_x0 = mmap[8:11]
+        f_x1 = f_x0 + (f_nx-1) * f_dx
+
+        # Return the axes
+        f_axes = [np.linspace(*x) for x in zip(f_x0, f_x1, f_nx)]
+
+        if self._order == 'C':
+            return f_axes[::-1]
+        return f_axes
+
+    def get_grid(self, dataset, merge_domains=True):
         """Get the 4D grid for the dataset, defined on cell centers."""
 
-        # Step from the header is not exactly right, due to floating point
-        # issues and the possibility of strided output. To get a better
-        # estimate, we will read in the header from the first rank on the
-        # first timestep. This is not robust if user changes stride or has a
-        # non-uniform decomposition, but these are extreme cases.
-        finfo = self.get_fileinfo(dataset)
+        # Find all the timesteps for this dataset
         tsteps = self.get_timesteps(dataset)
-
         if tsteps.size == 0:
             return [[0]]*4
 
-        # Find the first file.
-        testfile = os.path.join(self._params['basedir'],
-                                finfo['data_directory'],
-                                f'T.{tsteps[0]}',
-                                f'{finfo["data_base_filename"]}.{tsteps[0]}.0')
+        # Get rank 0 gird. This should always exist.
+        axes = self.get_local_grid(dataset, 0, tsteps[0])
+        topo = self._topology
 
-        # Read in the header to find data dimensions in C-ordering.
-        dims = np.memmap(testfile, dtype='int32', shape=(3,), offset=35)[::-1]
+        if not merge_domains:
+            axes = [[x] for x in axes]
+
+        # Now build in each F-ordered direction
+        for axis in range(3):
+            index = [0, 0, 0]
+
+            # Build along a dimension
+            for i in range(1, topo[axis]):
+                index[axis] = i
+                rank = np.ravel_multi_index(index, topo, order=self._order)
+                rank_axes = self.get_local_grid(dataset, rank, tsteps[0])
+
+                if merge_domains:
+                    axes[axis] = np.hstack([axes[axis], rank_axes[axis]])
+                else:
+                    axes[axis].append(rank_axes[axis])
+
+        # Add in timesteps
+        t = tsteps*self._params['grid']['delta_t']
 
         if self._order == 'C':
-            dims = dims * self.topology
+            axes = [t] + axes
         else:
-            dims = dims * self.topology[::-1]
-
-        # C-ordered grid
-        grid = self._params['grid']
-        axes = [tsteps*self._params['grid']['delta_t'],]
-        for axis, axis_dim in zip(['z', 'y', 'x'], dims):
-            start, stop = grid[f'extents_{axis}']
-            axes.append((np.arange(axis_dim)+0.5)*(stop-start)/axis_dim + start)
-
-        # F-ordered grid
-        if self._order == 'F':
-            axes = axes[::-1]
-
-        return axes
+            axes = axes + [t]
 
     def __getitem__(self, dataset):
         """Get a dataset."""
 
         # Get the datashape for individual files.
         if self._order == 'C':
-            tsteps, *datashape = self.get_grid(dataset)
+            tsteps, *datashape = self.get_grid(dataset, merge_domains=False)
         else:
-            *datashape, tsteps = self.get_grid(dataset)
+            *datashape, tsteps = self.get_grid(dataset, merge_domains=False)
+
         tsteps = np.round(tsteps/self._params['grid']['delta_t']).astype('int')
-        datashape = tuple(map(len, datashape))/self.topology
+
+        for axis in range(3):
+            datashape[axis] = np.asarray(list(map(len, datashape[axis])))
 
         # Load the info about the set of files containing dataset
         fileinfo = self.get_fileinfo(dataset)
@@ -286,13 +326,22 @@ class FilePerRankReader(BaseReader):
         dtype, offset = fileinfo['dtype'].fields[dataset]
 
         if self._interleave:
+
+            # Offsets are constant across files.
             offset = offset + self._params['header_size']
+            offset_func = lambda shape: offset
+
+            # Stride is constant across files.
             stride = fileinfo['dtype'].itemsize
             assert stride % dtype.itemsize == 0
             stride = stride//dtype.itemsize
+
         else:
-            # Add 2 to account for ghost cells.
-            offset = offset*np.prod(datashape+2) + self._params['header_size']
+
+            # Add extra offset to account for ghosts.
+            offset_func = lambda shape: offset*np.prod(shape) + self._params['header_size']
+
+            # Stride is constant across files.
             stride = 1
 
         # Now contruct the array of files.
@@ -307,19 +356,19 @@ class FilePerRankReader(BaseReader):
         topo = tuple(self.topology)
         tsteps = (len(tsteps),)
         if self._order == 'C':
-            datashape = (1,) + tuple(datashape)
+            datashape = [np.ones(len(tsteps))] + datashape
             datafiles = np.array(datafiles).reshape(tsteps + topo, order='C')
             ghosts = (0, 1, 1, 1)
         else:
-            datashape = tuple(datashape) + (1,)
+            datashape = datashape + [np.ones(len(tsteps))]
             datafiles = np.array(datafiles).reshape(topo + tsteps, order='F')
             ghosts = (1, 1, 1, 0)
 
         # Create the dataset.
-        return MultiFileDataset(datafiles,
-                                datashape,
-                                dtype=dtype,
-                                offset=offset,
-                                stride=stride,
-                                order=self._order,
-                                ghosts=ghosts)
+        return NonUniformMultiFileDataset(datafiles,
+                                          datashape,
+                                          dtype=dtype,
+                                          offset=offset_func,
+                                          stride=stride,
+                                          order=self._order,
+                                          ghosts=ghosts)
