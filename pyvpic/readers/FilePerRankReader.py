@@ -2,7 +2,7 @@ import os
 import re
 import numpy as np
 from .BaseReader import BaseReader
-from .MultiFileDataset import MultiFileDataset
+from .MultiFileDataset import NonUniformMultiFileDataset
 
 class FilePerRankReader(BaseReader):
 
