@@ -114,7 +114,7 @@ class MultiFileDataset:
 
         # Store file information
         self._fileshape = fileshape
-        self._fileorigin = [np.cumsum(shape)-shape[0] for shape in fileshape]
+        self._fileorigin = [np.hstack([[0], np.cumsum(shape)[:-1]]) for shape in fileshape]
         self._shape = np.asarray([np.sum(x) for x in fileshape]).astype('int')
 
     @property
