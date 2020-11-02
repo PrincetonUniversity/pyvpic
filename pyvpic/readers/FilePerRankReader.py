@@ -2,7 +2,7 @@ import os
 import re
 import numpy as np
 from .BaseReader import BaseReader
-from .MultiFileDataset import NonUniformMultiFileDataset
+from .MultiFileDataset import MultiFileDataset
 
 class FilePerRankReader(BaseReader):
 
@@ -231,7 +231,7 @@ class FilePerRankReader(BaseReader):
                                 f'T.{timestep}',
                                 f'{finfo["data_base_filename"]}.{timestep}.{rank}')
 
-        mmap = np.memmap(rankfile, dtype='int32', shape=(16,), offset=31)[::-1]
+        mmap = np.memmap(rankfile, dtype='int32', shape=(16,), offset=31)
 
         # Load step and local grid
         file_step = mmap[0]
@@ -300,6 +300,8 @@ class FilePerRankReader(BaseReader):
         else:
             axes = axes + [t]
 
+        return axes
+
     def __getitem__(self, dataset):
         """Get a dataset."""
 
@@ -354,21 +356,21 @@ class FilePerRankReader(BaseReader):
 
         # Correct shape for ordering
         topo = tuple(self.topology)
-        tsteps = (len(tsteps),)
+        nsteps = len(tsteps)
         if self._order == 'C':
-            datashape = [np.ones(len(tsteps))] + datashape
-            datafiles = np.array(datafiles).reshape(tsteps + topo, order='C')
+            datashape = [np.ones(nsteps)] + datashape
+            datafiles = np.array(datafiles).reshape((nsteps,) + topo, order='C')
             ghosts = (0, 1, 1, 1)
         else:
-            datashape = datashape + [np.ones(len(tsteps))]
-            datafiles = np.array(datafiles).reshape(topo + tsteps, order='F')
+            datashape = datashape + [np.ones(nsteps)]
+            datafiles = np.array(datafiles).reshape(topo + (nsteps,), order='F')
             ghosts = (1, 1, 1, 0)
 
         # Create the dataset.
-        return NonUniformMultiFileDataset(datafiles,
-                                          datashape,
-                                          dtype=dtype,
-                                          offset=offset_func,
-                                          stride=stride,
-                                          order=self._order,
-                                          ghosts=ghosts)
+        return MultiFileDataset(datafiles,
+                                datashape,
+                                dtype=dtype,
+                                offset=offset_func,
+                                stride=stride,
+                                order=self._order,
+                                ghosts=ghosts)
