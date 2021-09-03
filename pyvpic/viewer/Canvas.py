@@ -52,6 +52,7 @@ class VPICCanvas(FigureCanvas):
         self.image = None
         self.data = np.empty([0, 0, 0, 0])
         self.data_stale = True
+        self.cbar = None
 
     @log_timing
     def read_data(self):
@@ -113,10 +114,12 @@ class VPICCanvas(FigureCanvas):
                                                 extent=extent)
 
             # Colobar construction
-            cbar = self.fig.colorbar(self.image, cax=self.axes[0, 0])
-            cbar.ax.tick_params(axis='y',
-                                right=False, labelright=False,
-                                left=True, labelleft=True)
+            self.cbar = self.fig.colorbar(self.image, cax=self.axes[0, 0])
+
+        if self.cbar is not None:
+            self.cbar.ax.tick_params(axis='y',
+                                     right=False, labelright=False,
+                                     left=True, labelleft=True)
 
         # Set tickparams.
         self.axes[0, 1].tick_params(axis='both',
