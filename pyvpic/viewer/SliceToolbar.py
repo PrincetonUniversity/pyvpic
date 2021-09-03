@@ -50,7 +50,9 @@ class VPICToolbar(NavigationToolbar):
         """This is hackish, but works with current matplotlib.
         Overrides def in matplotlib.backends.backend_qt5.NavigationToolbar2QT"""
         super()._update_buttons_checked()
-        self._actions['slice'].setChecked(self._active == 'SLICE')
+
+        if 'slice' in self._actions:
+            self._actions['slice'].setChecked(self._active == 'SLICE')
 
     def _set_cursor(self, event):
         """Also hackish, but allows us to change the cursor.
