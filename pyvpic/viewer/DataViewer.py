@@ -61,6 +61,9 @@ class VPICDataViewer(QtWidgets.QMainWindow, uic.loadUiType(UIFILE)[0]):
         self.logger = logging.getLogger('vpic.viewer')
         self.logger.info('Loading dataset: empty')
 
+        # Active dataset
+        self.active_dataset = None
+
         # Initialize the axes
         self.update_axes()
 
@@ -94,6 +97,7 @@ class VPICDataViewer(QtWidgets.QMainWindow, uic.loadUiType(UIFILE)[0]):
             self.logger.error(str(ioerr))
             return
         self.tree_model.setTree(self.vpic_io.tree)
+        self.active_dataset = None
         self.change_dataset()
 
     def change_dataset(self):
@@ -102,11 +106,15 @@ class VPICDataViewer(QtWidgets.QMainWindow, uic.loadUiType(UIFILE)[0]):
         dataset = self.tree_model.data(self.TreeView.currentIndex(),
                                        QtCore.Qt.UserRole)
 
+        rescale = self.active_dataset is None
+
         if dataset is not None:
             self.logger.info(f'Loading dataset: {dataset}')
             self.load_metadata(dataset)
             self.fig.read_data()
-            self.fig.draw_plots(rescale=True)
+            self.fig.draw_plots(rescale=rescale)
+
+        self.active_dataset = dataset
 
     @log_timing
     def load_metadata(self, dataset):
