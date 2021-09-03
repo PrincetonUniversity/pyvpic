@@ -120,7 +120,7 @@ def reconstruct_domain(file_pattern, order='F'):
 
     for filename in os.listdir(directory):
         if fnmatch.fnmatch(filename, time_pattern):
-            header = VPICFile(filename).header
+            header = VPICFile(os.path.join(directory, filename)).header
             nproc = header['nproc']
             time.append(header['step']*header['grid']['dt'])
             steps.append(header['step'])
@@ -153,23 +153,29 @@ def reconstruct_domain(file_pattern, order='F'):
 
     x = np.concatenate([local_grid(ix, 0) for ix in range(gnx)])
     y = np.concatenate([local_grid(iy*gnx, 1) for iy in range(gny)])
-    z = np.concatenate([local_grid(iz*gny*gnx, 1) for iz in range(gnz)])
+    z = np.concatenate([local_grid(iz*gny*gnx, 2) for iz in range(gnz)])
 
     # Reorder datafiles and grid.
     datafiles = np.array([file_pattern.format(rank=rank, step=step)
                           for step in steps for rank in range(nproc)])
 
+    # If we have a regular decomposition, simplify the shape.
+    unique_shape = np.unique(nx, axis=0)
+    if unique_shape.size == 3:
+        shapes = tuple(unique_shape[0].astype('int'))
+    else:
+        raise NotImplementedError('Only uniform domain decompositions are supported.')
+
     if order == 'F':
         datafiles = datafiles.reshape((gnx, gny, gnz, len(steps)), order='F')
-        nx = nx.reshape((gnx, gny, gnz), order='F')
         grid = (x, y, z, time)
     else:
         datafiles = datafiles.reshape((len(steps), gnz, gny, gnx), order='C')
-        nx = nx.reshape((gnz, gny, gnx), order='C')
         grid = (time, z, y, x)
+        shapes = shapes[::-1]
 
     # Return.
-    return grid, datafiles, steps, nx
+    return grid, datafiles, steps, shapes
 
 
 

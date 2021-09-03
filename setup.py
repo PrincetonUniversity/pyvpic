@@ -10,7 +10,7 @@ setup(
     install_requires = [
         'numpy',
         'matplotlib',
-        'PyQt5'
+#        'PyQt5'
     ],
     entry_points = {
         'gui_scripts': ['vpicviewer=pyvpic.viewer:_main_command_line'],

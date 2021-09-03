@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import numpy as np
 from .BaseReader import BaseReader
 from .MultiFileDataset import MultiFileDataset, offset_slicer
@@ -9,6 +10,14 @@ PARTICLE_DTYPE = np.dtype([
     ('dx', 'f4'), ('dy', 'f4'), ('dz', 'f4'), ('i', 'i4'),
     ('ux', 'f4'), ('uy', 'f4'), ('uz', 'f4'), ('w', 'f4')
 ])
+
+def offsets_from_counts(counts, order='C'):
+    """Construct buffer offsets from bin counts."""
+
+    offsets = np.roll(np.cumsum(counts.flatten(order=order)), 1)
+    offsets[0] = 0
+    return offsets.reshape(counts.shape, order=order)
+
 
 class ParticleCache:
 
@@ -43,9 +52,13 @@ class ParticleCache:
     def squeeze(self, axis=None):
         """Squeeze the bins, counts, and offsets."""
 
-        self.bins = np.squeeze(self.bins, axis=axis)
-        self.counts = np.squeeze(self.counts, axis=axis)
-        self.offsets = np.squeeze(self.offsets, axis=axis)
+        return ParticleCache(
+            self.particles,
+            np.squeeze(self.bins, axis=axis),
+            np.squeeze(self.counts, axis=axis),
+            np.squeeze(self.offsets, axis=axis),
+            order=self._order
+        )
 
 
     def __getitem__(self, slicer):
@@ -70,9 +83,7 @@ class ParticleCache:
             ])
 
         # Get the subset offsets.
-        offsets = np.cumsum(counts.flatten(order=self._order))
-        offsets -= offsets[0]
-        offsets.reshape(bins.shape, order=self._order)
+        offsets = offsets_from_counts(counts, order=self._order)
 
         # Return a new array
         return ParticleCache(subset, bins, counts, offsets, order=self._order)
@@ -95,12 +106,15 @@ class ParticleMultiFileDataset(MultiFileDataset):
         will be ignored.
     """
 
-    def __init__(self, datafiles, fileshape, order='C'):
+    def __init__(self, datafiles, fileshape, order='C', presorted=False):
 
-        self._files = np.atleast_1d(datafiles)
-        self._shape = np.atleast_1d(fileshape).astype('int')
-        self._order = order
-        self._dtype = PARTICLE_DTYPE
+        self._presorted = presorted
+
+        if self._presorted:
+            self._cache = {}
+
+        super().__init__(datafiles, fileshape, order=order,
+                         dtype=PARTICLE_DTYPE, ghosts=(1,1,1))
 
 
     def __repr__(self):
@@ -117,7 +131,7 @@ class ParticleMultiFileDataset(MultiFileDataset):
         if array_info['element_size'] != self._dtype.itemsize:
             raise IOError('Invalid particle size detected.')
 
-        # Update shape to mathc requested ordering.
+        # Update shape to match requested ordering.
         shape = np.array(header['grid']['shape'])
         if header['grid']['order'] != self._order:
             shape = shape[::-1]
@@ -143,22 +157,40 @@ class ParticleMultiFileDataset(MultiFileDataset):
         bins = np.arange(num_voxels).reshape(shape + 2*self._ghosts, order=self._order)
         bins = bins[tuple(ghost_slicer)][slicer]
 
-        # Sort
-        permute_vector = np.argsort(data['i'], kind='stable')
-        bincounts = np.bincount(data['i'], minlength=num_voxels)
-        offsets = np.cumsum(bincounts)
-        offsets -= offsets[0]
+        # Indirectly sort and load particles.
+        # No caching if particles are not presorted because this
+        # requires caching the permute_vector which is Nparticles long.
+        if not self._presorted:
+            
+            permute_vector = np.argsort(data['i'], kind='stable')
+            bincounts = np.bincount(data['i'], minlength=num_voxels)
+            data = np.concatenate([
+                data[permute_vector[offsets[bin] : offsets[bin] + bincounts[bin]]]
+                for bin in bins.flatten(order=self._order)
+            ])
 
-        data = np.concatenate([
-            data[permute_vector[offsets[bin] : offsets[bin] + bincounts[bin]]]
-            for bin in bins.flatten(order=self._order)
-        ])
+        # Load data using either cached counts, or reconstructing counts.
+        else:
+
+            # Load from the cache.
+            if filename in self._cache:
+                bincounts = self._cache[filename]['counts']
+
+            # Construct and cache
+            else:
+                bincounts = np.bincount(data['i'], minlength=num_voxels)
+                self._cache[filename] = {'counts': bincounts}
+
+            # Builds offsets and load the particles.
+            offsets = offsets_from_counts(bincounts, order=self._order)
+            data = np.concatenate([
+                data[offsets[bin] : offsets[bin] + bincounts[bin]]
+                for bin in bins.flatten(order=self._order)
+            ])
 
         # New offsets and counts.
         bincounts = bincounts[bins]
-        offsets = np.cumsum(bincounts.flatten(order=self._order))
-        offsets -= offsets[0]
-        offsets = offsets.reshape(bins.shape, order=self._order)
+        offsets = offsets_from_counts(bincounts, order=self._order)
 
         # Adjust to global index.
         voxel_offset = header['rank']*num_voxels
@@ -173,36 +205,28 @@ class ParticleMultiFileDataset(MultiFileDataset):
 
         shape = [(aslice.stop-aslice.start)//aslice.step for aslice in slicer]
 
-        particle_data = np.zeros(shape, dtype=self._dtype)
+        particle_data = np.zeros(0, dtype=self._dtype)
         particle_bins = np.zeros(shape, dtype='int')
         particle_counts = np.zeros(shape, dtype='int')
         particle_offsets = np.zeros(shape, dtype='int')
 
-        offset = [0,]*self.ndim
         for findex in np.ndindex(files.shape):
 
             # Move slicer to file origin.
-            local_slicer = offset_slicer(slicer, -(findex*self._shape),
-                                         self._shape)
+            local_slicer, offset = offset_slicer(slicer, 
+                                                 -(findex*self._shape),
+                                                 self._shape)
 
             # Get data.
-            ldata, lcounts, lbins, loffsets = self._get_filedata(files[findex], local_slicer)
+            ldata, lbins, lcounts, loffsets = self._get_filedata(files[findex], local_slicer)
 
             # Update offsets and append data
             loffsets += len(particle_data)
             particle_data = np.concatenate([particle_data, ldata])
 
-            # Find where this block belongs globally.
-            for i in range(self.ndim-1, -1, -1):
-                if findex[i] != 0:
-                    offset[i] = offset[i] + loffsets.shape[i]
-                    break
-                else:
-                    offset[i] = 0
-
             # Insert the block into the output data.
             local_slicer = tuple([slice(off, off+size) for off, size
-                                  in zip(offset, loffsets.shape)])
+                                  in zip(offset, lbins.shape)])
 
             particle_bins[local_slicer] = lbins
             particle_counts[local_slicer] = lcounts
@@ -217,21 +241,21 @@ class ParticleMultiFileDataset(MultiFileDataset):
 
 class ParticleReader:
 
-    def __init__(self, prefix, order='F'):
+    def __init__(self, prefix, order='F', presorted=False):
 
-        file_pattern = prefix + '.{time}.{rank}'
+        file_pattern = prefix + '.{step}.{rank}'
         self._order = order
         grid, datafiles, steps, shapes = reconstruct_domain(file_pattern, order=order)
 
         self._datafiles = datafiles
         self._grid = grid
         self._steps = steps
+        self._fileshape = shapes
+        self._presorted = presorted
 
-        unique_shape = np.unique(shapes, axis=0)
-        if unique_shape.size != shapes.ndim:
-            raise NotImplementedError('Only uniform domain decompositions are supported.')
-
-        self._fileshape = tuple(unique_shape[0].astype('int'))
+        # Allows caching of one particle dataset for better performance.
+        self._selected_index = -1
+        self._dataset = None
 
 
     @property
@@ -265,12 +289,19 @@ class ParticleReader:
             slicer = slicer[1:]
         else:
             step_index = slicer
-            slicer = [slice(None)]*len(self._fileshape)
+            slicer = None
 
         if not isinstance(step_index, int):
             raise NotImplementedError('Only single time indexing is supported.')
 
-        # Format files.
-        return ParticleMultiFileDataset(self._datafiles[step_index],
-                                        self._fileshape,
-                                        order=self._order)[slicer]
+        if step_index != self._selected_index:
+
+            self._selected_index = step_index
+            self._dataset = ParticleMultiFileDataset(self._datafiles[step_index],
+                                                     self._fileshape,
+                                                     order=self._order,
+                                                     presorted=self._presorted)
+
+        if slicer is not None:
+            return self._dataset[slicer]
+        return self._dataset

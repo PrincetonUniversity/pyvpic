@@ -33,21 +33,24 @@ def offset_slicer(slicer, offset, shape):
     Offset without hitting bounds.
 
     >>> offset_slicer(slicer, [1], shape)
-    [slice(1, 6, 2)]
+    (slice(1, 6, 2),), (0,)
 
     Offset, moving past upper bound.
 
     >>> offset_slicer(slicer, [7], shape)
-    [slice(7, 10, 2)]
+    (slice(7, 10, 2),), (0,)
 
     Offset, moving below lower bound.
 
     >>> offset_slicer(slicer, [-1], shape)
-    [slice(1, 4, 2)]
+    (slice(1, 4, 2),), (1,)
     >>> offset_slicer(slicer, [-2], shape)
-    [slice(0, 3, 2)]
+    (slice(0, 3, 2),), (1,)
+    >>> offset_slicer(slicer, [-3], shape)
+    (slice(1, 2, 2),), (2,)
     """
     new_slicer = []
+    lower_offset = []
     for aslice, aoff, alen in zip(slicer, offset, shape):
         step = 1
         if aslice.step:
@@ -55,11 +58,15 @@ def offset_slicer(slicer, offset, shape):
 
         start = aslice.start + aoff
         if start < 0:
-            start = start % step
+            new_start = start % step
+            lower_offset.append((new_start - start) // step)
+            start = new_start
+        else:
+            lower_offset.append(0)
 
         stop = min(alen, aslice.stop + aoff)
         new_slicer.append(slice(start, stop, step))
-    return tuple(new_slicer)
+    return tuple(new_slicer), tuple(lower_offset)
 
 
 class MultiFileDataset:
@@ -149,7 +156,7 @@ class MultiFileDataset:
 
         shape = [(aslice.stop-aslice.start)//aslice.step for aslice in slicer]
         data = np.zeros(shape, dtype=self._dtype)
-        offset = [0,]*self.ndim
+
         for findex in np.ndindex(files.shape):
 
             # Load the local block and slice off what we need.
@@ -168,19 +175,12 @@ class MultiFileDataset:
 
 
             # Move slicer to file origin.
-            local_slicer = offset_slicer(slicer, -(findex*self._shape),
-                                         self._shape)
+            local_slicer, offset = offset_slicer(slicer, 
+                                                 -(findex*self._shape),
+                                                 self._shape)
 
             # Get data.
             local_data = self._get_memmap(files[findex])[local_slicer]
-
-            # Find where this block belongs globally.
-            for i in range(self.ndim-1, -1, -1):
-                if findex[i] != 0:
-                    offset[i] = offset[i] + local_data.shape[i]
-                    break
-                else:
-                    offset[i] = 0
 
             # Insert the block into the output data.
             local_slicer = tuple([slice(off, off+size) for off, size
@@ -231,7 +231,7 @@ class MultiFileDataset:
             offset.append(-start*self._shape[i])
             fileslicer.append(slice(start, stop))
 
-        slicer = offset_slicer(slicer, offset, self.shape)
+        slicer, _ = offset_slicer(slicer, offset, self.shape)
         files = self.files[tuple(fileslicer)]
 
         # At this point, fileslicer prunes off files that don't contain needed
